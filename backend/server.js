@@ -7,7 +7,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'qrcodedashboard$123';
+const JWT_SECRET = process.env.JWT_SECRET || 'MinhaChaveSecreta123';
 
 // Middleware
 app.use(cors());
@@ -49,8 +49,7 @@ db.serialize(() => {
   db.run(`INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)`, 
     ['admin', adminPassword]);
 
-  db.run(`INSERT OR IGNORE INTO attractions (name) VALUES (?)`, ['Big Wheel']);
-  db.run(`INSERT OR IGNORE INTO attractions (name) VALUES (?)`, ['Alles Park']);
+  // Não inserir atrações de exemplo - o usuário pode adicionar pela interface
 });
 
 // Middleware de autenticação
