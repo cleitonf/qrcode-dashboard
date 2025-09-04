@@ -7,7 +7,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_aqui';
+const JWT_SECRET = process.env.JWT_SECRET || 'qrcodedashboard$123';
 
 // Middleware
 app.use(cors());
@@ -45,7 +45,7 @@ db.serialize(() => {
   )`);
 
   // Inserir usuário admin padrão (senha: admin123)
-  const adminPassword = bcrypt.hashSync('adminvyoo', 10);
+  const adminPassword = bcrypt.hashSync('admin.vyoo', 10);
   db.run(`INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)`, 
     ['admin', adminPassword]);
 
