@@ -23,7 +23,7 @@ client.connect()
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://sua-url.vercel.app'
+    'https://qrcodedashboard.vercel.app'
   ],
   credentials: true
 }));
