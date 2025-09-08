@@ -1,56 +1,83 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Client } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'MinhaChaveSecreta123';
 
+// Configuração do PostgreSQL
+const client = new Client({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Conectar ao banco
+client.connect()
+  .then(() => console.log('Conectado ao PostgreSQL'))
+  .catch(err => console.error('Erro ao conectar ao PostgreSQL:', err));
+
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'https://sua-url.vercel.app'
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
-// Inicializar banco SQLite
-const db = new sqlite3.Database('./database.sqlite');
-
 // Criar tabelas
-db.serialize(() => {
-  // Tabela de usuários
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+const createTables = async () => {
+  try {
+    // Tabela de usuários
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Tabela de atrações
-  db.run(`CREATE TABLE IF NOT EXISTS attractions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+    // Tabela de atrações
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS attractions (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Tabela de dados diários
-  db.run(`CREATE TABLE IF NOT EXISTS daily_data (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    attraction_id INTEGER,
-    date DATE NOT NULL,
-    qrcodes_delivered INTEGER DEFAULT 0,
-    sales_made INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (attraction_id) REFERENCES attractions (id)
-  )`);
+    // Tabela de dados diários
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS daily_data (
+        id SERIAL PRIMARY KEY,
+        attraction_id INTEGER REFERENCES attractions(id),
+        date DATE NOT NULL,
+        qrcodes_delivered INTEGER DEFAULT 0,
+        sales_made INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Inserir usuário admin padrão (senha: admin123)
-  const adminPassword = bcrypt.hashSync('admin.vyoo', 10);
-  db.run(`INSERT OR IGNORE INTO users (username, password) VALUES (?, ?)`, 
-    ['admin', adminPassword]);
+    // Inserir usuário admin se não existir
+    const adminPassword = bcrypt.hashSync('admin.vyoo', 10);
+    await client.query(`
+      INSERT INTO users (username, password) 
+      VALUES ($1, $2) 
+      ON CONFLICT (username) DO NOTHING
+    `, ['admin', adminPassword]);
 
-  // Não inserir atrações de exemplo - o usuário pode adicionar pela interface
-});
+    console.log('Tabelas criadas com sucesso');
+  } catch (err) {
+    console.error('Erro ao criar tabelas:', err);
+  }
+};
+
+createTables();
 
 // Middleware de autenticação
 const authenticateToken = (req, res, next) => {
@@ -69,13 +96,12 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Rotas de autenticação
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
-  db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: 'Erro interno do servidor' });
-    }
+  try {
+    const result = await client.query('SELECT * FROM users WHERE username = $1', [username]);
+    const user = result.rows[0];
     
     if (!user || !bcrypt.compareSync(password, user.password)) {
       return res.status(401).json({ error: 'Credenciais inválidas' });
@@ -83,31 +109,67 @@ app.post('/api/login', (req, res) => {
 
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET);
     res.json({ token, user: { id: user.id, username: user.username } });
-  });
+  } catch (err) {
+    console.error('Erro no login:', err);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
 });
 
 // Rotas protegidas
-app.get('/api/attractions', authenticateToken, (req, res) => {
-  db.all('SELECT * FROM attractions ORDER BY name', (err, attractions) => {
-    if (err) {
-      return res.status(500).json({ error: 'Erro ao buscar atrações' });
-    }
-    res.json(attractions);
-  });
+app.get('/api/attractions', authenticateToken, async (req, res) => {
+  try {
+    const result = await client.query('SELECT * FROM attractions ORDER BY name');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erro ao buscar atrações:', err);
+    res.status(500).json({ error: 'Erro ao buscar atrações' });
+  }
 });
 
-app.post('/api/attractions', authenticateToken, (req, res) => {
+app.post('/api/attractions', authenticateToken, async (req, res) => {
   const { name } = req.body;
   
-  db.run('INSERT INTO attractions (name) VALUES (?)', [name], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'Erro ao criar atração' });
-    }
-    res.json({ id: this.lastID, name });
-  });
+  if (!name || name.trim() === '') {
+    return res.status(400).json({ error: 'Nome da atração é obrigatório' });
+  }
+  
+  try {
+    const result = await client.query(
+      'INSERT INTO attractions (name) VALUES ($1) RETURNING id, name',
+      [name.trim()]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erro ao criar atração:', err);
+    res.status(500).json({ error: 'Erro ao criar atração' });
+  }
 });
 
-app.get('/api/dashboard-data', authenticateToken, (req, res) => {
+app.delete('/api/attractions/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Verificar se a atração tem dados associados
+    const checkData = await client.query('SELECT COUNT(*) as count FROM daily_data WHERE attraction_id = $1', [id]);
+    
+    if (parseInt(checkData.rows[0].count) > 0) {
+      return res.status(400).json({ error: 'Não é possível excluir atração com dados associados' });
+    }
+    
+    const result = await client.query('DELETE FROM attractions WHERE id = $1', [id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Atração não encontrada' });
+    }
+    
+    res.json({ message: 'Atração excluída com sucesso' });
+  } catch (err) {
+    console.error('Erro ao excluir atração:', err);
+    res.status(500).json({ error: 'Erro ao excluir atração' });
+  }
+});
+
+app.get('/api/dashboard-data', authenticateToken, async (req, res) => {
   const { startDate, endDate, attractionId } = req.query;
   
   let query = `
@@ -129,118 +191,107 @@ app.get('/api/dashboard-data', authenticateToken, (req, res) => {
   `;
   
   const params = [];
+  let paramCount = 0;
   
   if (startDate) {
-    query += ' AND d.date >= ?';
+    paramCount++;
+    query += ` AND d.date >= $${paramCount}`;
     params.push(startDate);
   }
   
   if (endDate) {
-    query += ' AND d.date <= ?';
+    paramCount++;
+    query += ` AND d.date <= $${paramCount}`;
     params.push(endDate);
   }
   
   if (attractionId && attractionId !== 'all') {
-    query += ' AND d.attraction_id = ?';
+    paramCount++;
+    query += ` AND d.attraction_id = $${paramCount}`;
     params.push(attractionId);
   }
   
   query += ' ORDER BY d.date DESC, a.name';
   
-  db.all(query, params, (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: 'Erro ao buscar dados' });
-    }
-    res.json(rows);
-  });
+  try {
+    const result = await client.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erro ao buscar dados:', err);
+    res.status(500).json({ error: 'Erro ao buscar dados' });
+  }
 });
 
-app.put('/api/daily-data/:id', authenticateToken, (req, res) => {
+app.post('/api/daily-data', authenticateToken, async (req, res) => {
+  const { attractionId, date, qrcodesDelivered, salesMade } = req.body;
+  
+  try {
+    // Verificar se já existe dados para esta atração nesta data
+    const existing = await client.query(
+      'SELECT id FROM daily_data WHERE attraction_id = $1 AND date = $2',
+      [attractionId, date]
+    );
+    
+    if (existing.rows.length > 0) {
+      // Atualizar dados existentes
+      await client.query(
+        'UPDATE daily_data SET qrcodes_delivered = $1, sales_made = $2 WHERE id = $3',
+        [qrcodesDelivered, salesMade, existing.rows[0].id]
+      );
+      res.json({ message: 'Dados atualizados com sucesso' });
+    } else {
+      // Inserir novos dados
+      const result = await client.query(
+        'INSERT INTO daily_data (attraction_id, date, qrcodes_delivered, sales_made) VALUES ($1, $2, $3, $4) RETURNING id',
+        [attractionId, date, qrcodesDelivered, salesMade]
+      );
+      res.json({ message: 'Dados inseridos com sucesso', id: result.rows[0].id });
+    }
+  } catch (err) {
+    console.error('Erro ao inserir/atualizar dados:', err);
+    res.status(500).json({ error: 'Erro ao processar dados' });
+  }
+});
+
+app.put('/api/daily-data/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { attractionId, date, qrcodesDelivered, salesMade } = req.body;
   
-  db.run(
-    'UPDATE daily_data SET attraction_id = ?, date = ?, qrcodes_delivered = ?, sales_made = ? WHERE id = ?',
-    [attractionId, date, qrcodesDelivered, salesMade, id],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Erro ao atualizar dados' });
-      }
-      
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Registro não encontrado' });
-      }
-      
-      res.json({ message: 'Dados atualizados com sucesso' });
-    }
-  );
-});
-
-app.delete('/api/daily-data/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
-  
-  db.run('DELETE FROM daily_data WHERE id = ?', [id], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'Erro ao excluir dados' });
+  try {
+    const result = await client.query(
+      'UPDATE daily_data SET attraction_id = $1, date = $2, qrcodes_delivered = $3, sales_made = $4 WHERE id = $5',
+      [attractionId, date, qrcodesDelivered, salesMade, id]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Registro não encontrado' });
     }
     
-    if (this.changes === 0) {
+    res.json({ message: 'Dados atualizados com sucesso' });
+  } catch (err) {
+    console.error('Erro ao atualizar dados:', err);
+    res.status(500).json({ error: 'Erro ao atualizar dados' });
+  }
+});
+
+app.delete('/api/daily-data/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await client.query('DELETE FROM daily_data WHERE id = $1', [id]);
+    
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Registro não encontrado' });
     }
     
     res.json({ message: 'Dados excluídos com sucesso' });
-  });
+  } catch (err) {
+    console.error('Erro ao excluir dados:', err);
+    res.status(500).json({ error: 'Erro ao excluir dados' });
+  }
 });
 
-app.post('/api/daily-data', authenticateToken, (req, res) => {
-  const { attractionId, date, qrcodesDelivered, salesMade } = req.body;
-  
-  console.log('Dados recebidos:', { attractionId, date, qrcodesDelivered, salesMade }); // Debug
-  
-  // Verificar se já existe dados para esta atração nesta data
-  db.get(
-    'SELECT id FROM daily_data WHERE attraction_id = ? AND date = ?',
-    [attractionId, date],
-    (err, existing) => {
-      if (err) {
-        console.error('Erro ao verificar dados existentes:', err);
-        return res.status(500).json({ error: 'Erro ao verificar dados existentes' });
-      }
-      
-      if (existing) {
-        // Atualizar dados existentes
-        db.run(
-          'UPDATE daily_data SET qrcodes_delivered = ?, sales_made = ? WHERE id = ?',
-          [qrcodesDelivered, salesMade, existing.id],
-          function(err) {
-            if (err) {
-              console.error('Erro ao atualizar dados:', err);
-              return res.status(500).json({ error: 'Erro ao atualizar dados' });
-            }
-            console.log('Dados atualizados para ID:', existing.id);
-            res.json({ message: 'Dados atualizados com sucesso' });
-          }
-        );
-      } else {
-        // Inserir novos dados
-        db.run(
-          'INSERT INTO daily_data (attraction_id, date, qrcodes_delivered, sales_made) VALUES (?, ?, ?, ?)',
-          [attractionId, date, qrcodesDelivered, salesMade],
-          function(err) {
-            if (err) {
-              console.error('Erro ao inserir dados:', err);
-              return res.status(500).json({ error: 'Erro ao inserir dados' });
-            }
-            console.log('Dados inseridos com ID:', this.lastID);
-            res.json({ message: 'Dados inseridos com sucesso', id: this.lastID });
-          }
-        );
-      }
-    }
-  );
-});
-
-app.get('/api/summary', authenticateToken, (req, res) => {
+app.get('/api/summary', authenticateToken, async (req, res) => {
   const { startDate, endDate, attractionId } = req.query;
   
   let query = `
@@ -258,28 +309,33 @@ app.get('/api/summary', authenticateToken, (req, res) => {
   `;
   
   const params = [];
+  let paramCount = 0;
   
   if (startDate) {
-    query += ' AND d.date >= ?';
+    paramCount++;
+    query += ` AND d.date >= $${paramCount}`;
     params.push(startDate);
   }
   
   if (endDate) {
-    query += ' AND d.date <= ?';
+    paramCount++;
+    query += ` AND d.date <= $${paramCount}`;
     params.push(endDate);
   }
   
   if (attractionId && attractionId !== 'all') {
-    query += ' AND d.attraction_id = ?';
+    paramCount++;
+    query += ` AND d.attraction_id = $${paramCount}`;
     params.push(attractionId);
   }
   
-  db.get(query, params, (err, summary) => {
-    if (err) {
-      return res.status(500).json({ error: 'Erro ao buscar resumo' });
-    }
-    res.json(summary);
-  });
+  try {
+    const result = await client.query(query, params);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erro ao buscar resumo:', err);
+    res.status(500).json({ error: 'Erro ao buscar resumo' });
+  }
 });
 
 app.listen(PORT, () => {
