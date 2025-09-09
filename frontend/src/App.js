@@ -75,10 +75,6 @@ const Login = ({ onLogin }) => {
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
         </div>
-        <p className="login-help">
-          <strong>Usuário padrão:</strong> admin<br/>
-          <strong>Senha padrão:</strong> admin123
-        </p>
       </div>
       <style jsx>{`
         .login-container {
