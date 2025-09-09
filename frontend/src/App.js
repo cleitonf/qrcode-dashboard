@@ -422,28 +422,28 @@ const Dashboard = ({ token, user, onLogout }) => {
   }, [filters]);
 
   const formatDate = (dateString) => {
-    if (!dateString) return '';
-    
-    // Para timestamps do PostgreSQL (ex: 2025-09-09T00:00:00.000Z)
-    const date = new Date(dateString);
-    
-    // Verificar se é uma data válida
-    if (isNaN(date.getTime())) {
-      // Fallback para formato string simples
-      if (typeof dateString === 'string' && dateString.includes('-')) {
-        const [year, month, day] = dateString.split('-');
-        return `${day}/${month}/${year}`;
-      }
-      return dateString;
-    }
-    
-    // Formatar para DD/MM/YYYY
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    
+  if (!dateString) return '';
+  
+  // Se é string no formato YYYY-MM-DD, processar diretamente
+  if (typeof dateString === 'string' && dateString.match(/^\d{4}-\d{2}-\d{2}/)) {
+    const [year, month, day] = dateString.split('T')[0].split('-');
     return `${day}/${month}/${year}`;
-  };
+  }
+  
+  // Para outros formatos, tentar converter
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) {
+    return dateString;
+  }
+  
+  // Ajustar para timezone local para evitar problemas de UTC
+  const localDate = new Date(date.getTime() + date.getTimezoneOffset() * 60000);
+  const day = localDate.getDate().toString().padStart(2, '0');
+  const month = (localDate.getMonth() + 1).toString().padStart(2, '0');
+  const year = localDate.getFullYear();
+  
+  return `${day}/${month}/${year}`;
+};
 
   return (
     <div className="dashboard">
