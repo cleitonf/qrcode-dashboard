@@ -75,6 +75,10 @@ const Login = ({ onLogin }) => {
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
         </div>
+        <p className="login-help">
+          <strong>Usuário padrão:</strong> admin<br/>
+          <strong>Senha padrão:</strong> admin123
+        </p>
       </div>
       <style jsx>{`
         .login-container {
@@ -219,13 +223,23 @@ const Dashboard = ({ token, user, onLogout }) => {
         apiCall(`/summary?${params}`)
       ]);
 
-      if (dashboardData && summaryData) {
+      if (dashboardData && Array.isArray(dashboardData)) {
         console.log('Dados recebidos:', dashboardData);
         setData(dashboardData);
+      } else {
+        console.error('Dashboard data inválido:', dashboardData);
+        setData([]);
+      }
+      
+      if (summaryData) {
         setSummary(summaryData);
+      } else {
+        setSummary({});
       }
     } catch (err) {
       console.error('Erro ao carregar dados:', err);
+      setData([]);
+      setSummary({});
     } finally {
       setLoading(false);
     }
@@ -412,11 +426,27 @@ const Dashboard = ({ token, user, onLogout }) => {
   }, [filters]);
 
   const formatDate = (dateString) => {
-    if (typeof dateString === 'string') {
-      const [year, month, day] = dateString.split('-');
-      return `${day}/${month}/${year}`;
+    if (!dateString) return '';
+    
+    // Para timestamps do PostgreSQL (ex: 2025-09-09T00:00:00.000Z)
+    const date = new Date(dateString);
+    
+    // Verificar se é uma data válida
+    if (isNaN(date.getTime())) {
+      // Fallback para formato string simples
+      if (typeof dateString === 'string' && dateString.includes('-')) {
+        const [year, month, day] = dateString.split('-');
+        return `${day}/${month}/${year}`;
+      }
+      return dateString;
     }
-    return new Date(dateString).toLocaleDateString('pt-BR');
+    
+    // Formatar para DD/MM/YYYY
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    
+    return `${day}/${month}/${year}`;
   };
 
   return (
@@ -691,7 +721,7 @@ const Dashboard = ({ token, user, onLogout }) => {
                   className="form-select"
                 >
                   <option value="">Selecione uma atração</option>
-                  {attractions.map(attraction => (
+                  {Array.isArray(attractions) && attractions.map(attraction => (
                     <option key={attraction.id} value={attraction.id}>
                       {attraction.name}
                     </option>
