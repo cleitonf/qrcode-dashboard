@@ -175,7 +175,7 @@ app.get('/api/dashboard-data', authenticateToken, async (req, res) => {
   let query = `
     SELECT 
       d.id,
-      d.date,
+      d.date::text as date,
       a.name as attraction_name,
       d.attraction_id,
       d.qrcodes_delivered,
@@ -194,14 +194,14 @@ app.get('/api/dashboard-data', authenticateToken, async (req, res) => {
   let paramCount = 0;
   
   if (startDate) {
-    paramCount++;
-    query += ` AND d.date >= $${paramCount}`;
-    params.push(startDate);
+  paramCount++;
+  query += ` AND d.date >= $${paramCount}::date`;  
+  params.push(startDate);
   }
   
   if (endDate) {
     paramCount++;
-    query += ` AND d.date <= $${paramCount}`;
+    query += ` AND d.date <= $${paramCount}::date`;  
     params.push(endDate);
   }
   
@@ -242,7 +242,7 @@ app.post('/api/daily-data', authenticateToken, async (req, res) => {
     } else {
       // Inserir novos dados
       const result = await client.query(
-        'INSERT INTO daily_data (attraction_id, date, qrcodes_delivered, sales_made) VALUES ($1, $2, $3, $4) RETURNING id',
+        'INSERT INTO daily_data (attraction_id, date, qrcodes_delivered, sales_made) VALUES ($1, $2::date, $3, $4) RETURNING id',
         [attractionId, date, qrcodesDelivered, salesMade]
       );
       res.json({ message: 'Dados inseridos com sucesso', id: result.rows[0].id });
@@ -259,7 +259,7 @@ app.put('/api/daily-data/:id', authenticateToken, async (req, res) => {
   
   try {
     const result = await client.query(
-      'UPDATE daily_data SET attraction_id = $1, date = $2, qrcodes_delivered = $3, sales_made = $4 WHERE id = $5',
+      'UPDATE daily_data SET attraction_id = $1, date = $2::date, qrcodes_delivered = $3, sales_made = $4 WHERE id = $5',
       [attractionId, date, qrcodesDelivered, salesMade, id]
     );
     
@@ -312,14 +312,14 @@ app.get('/api/summary', authenticateToken, async (req, res) => {
   let paramCount = 0;
   
   if (startDate) {
-    paramCount++;
-    query += ` AND d.date >= $${paramCount}`;
-    params.push(startDate);
+  paramCount++;
+  query += ` AND d.date >= $${paramCount}::date`;   
+  params.push(startDate);
   }
   
   if (endDate) {
     paramCount++;
-    query += ` AND d.date <= $${paramCount}`;
+    query += ` AND d.date <= $${paramCount}::date`;   
     params.push(endDate);
   }
   
